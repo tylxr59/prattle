@@ -1,0 +1,20 @@
+[project]
+name = "prattle"
+version = "0.1.0"
+description = "A terminal-based AI chat client with persistent memory"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "ISC"}
+dependencies = [
+    "textual>=0.47.0",
+    "httpx>=0.26.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+prattle = "prattle:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
