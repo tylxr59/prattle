@@ -23,6 +23,7 @@ class CommandHandler:
             "clear": self.cmd_clear,
             "parse": self.cmd_parse,
             "settings": self.cmd_settings,
+            "delete": self.cmd_delete,
         }
     
     def is_command(self, text: str) -> bool:
@@ -65,18 +66,20 @@ class CommandHandler:
         help_text = """
 **Available Commands:**
 
-**/help** - Show this help message
-**/settings** - Open settings editor
-**/switch <model>** - Switch to a different model
-**/models** - Browse and select from available models
-**/compact** - Summarize chat history to reduce context size
-**/branch [message_num]** - Create a new chat branching from a specific point
-**/move <folder>** - Move current chat to a folder
-**/search <query>** - Search across all chats
-**/parse** - Force update title and memories
-**/clear** - Clear current chat messages (keeps file)
+- /help - Show this help message
+- /settings - Open settings editor
+- /switch <model> - Switch to a different model
+- /models - Browse and select from available models
+- /compact - Summarize chat history to reduce context size
+- /branch [message_num] - Create a new chat branching from a specific point
+- /move <folder> - Move current chat to a folder
+- /search <query> - Search across all chats
+- /parse - Force update title and memories
+- /clear - Clear current chat messages (keeps file)
+- /delete - Delete the current chat permanently
 
 **Keybindings:**
+
 - Ctrl+N: New chat
 - Ctrl+F: Search chats
 - Ctrl+B: Toggle sidebar
@@ -122,6 +125,11 @@ class CommandHandler:
         
         if not all([chat_file, chat_id, openrouter]):
             return False, "Cannot compact: missing required context."
+        
+        # Type narrowing - all three are guaranteed non-None after the check above
+        assert chat_file is not None
+        assert chat_id is not None
+        assert openrouter is not None
         
         # Load current chat
         chat_data = chat_file.load_chat(chat_id)
@@ -169,6 +177,10 @@ class CommandHandler:
         if not all([chat_file, chat_id]):
             return False, "Cannot branch: missing required context."
         
+        # Type narrowing - both are guaranteed non-None after the check above
+        assert chat_file is not None
+        assert chat_id is not None
+        
         # Load current chat
         chat_data = chat_file.load_chat(chat_id)
         if not chat_data:
@@ -211,7 +223,7 @@ class CommandHandler:
         chat_file = context.get("chat_file")
         chat_id = context.get("current_chat_id")
         
-        if not all([chat_file, chat_id]):
+        if not chat_file or not chat_id:
             return False, "Cannot move: missing required context."
         
         success = chat_file.move_chat(chat_id, folder)
@@ -294,6 +306,9 @@ class CommandHandler:
         if not all([chat_file, chat_id]):
             return False, "Cannot clear: missing required context."
         
+        if not chat_file:
+            return False, "Chat file handler not available."
+        
         chat_data = chat_file.load_chat(chat_id)
         if not chat_data:
             return False, "Failed to load current chat."
@@ -314,9 +329,12 @@ class CommandHandler:
             return False, "Cannot parse: missing required context."
         
         # Load chat
-        chat_data = chat_file.load_chat(chat_id)
+        chat_data = chat_file.load_chat(chat_id) if chat_file else None
         if not chat_data:
             return False, "Failed to load current chat."
+        
+        if not memory_manager:
+            return False, "Memory manager not available."
         
         full_history = chat_data["full_history"]
         
@@ -331,7 +349,7 @@ class CommandHandler:
             force=True
         )
         
-        if title:
+        if title and chat_file:
             chat_file.update_metadata(chat_id, title=title)
         
         # Update memories
@@ -343,3 +361,22 @@ class CommandHandler:
         """Open settings editor (trigger UI settings screen)."""
         # This command will be handled specially by the app to show settings UI
         return True, "SHOW_SETTINGS_UI"
+    
+    async def cmd_delete(self, args: list[str], context: dict) -> tuple[bool, str]:
+        """Delete the current chat permanently."""
+        chat_file = context.get("chat_file")
+        chat_id = context.get("current_chat_id")
+        
+        if not chat_file or not chat_id:
+            return False, "Cannot delete: missing required context."
+        
+        # Find and delete the chat file
+        file_path = chat_file._find_chat_file(chat_id)
+        if not file_path or not file_path.exists():
+            return False, "Chat file not found."
+        
+        # Delete the file
+        file_path.unlink()
+        
+        # Signal to app to create new chat
+        return True, "DELETE_CHAT"

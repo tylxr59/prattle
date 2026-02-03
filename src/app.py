@@ -8,12 +8,11 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Header, Footer, Static, Input, ListView, ListItem, Label, OptionList
+from textual.widgets import Header, Footer, Static, Input, ListView, ListItem, Label, OptionList, Markdown
 from textual.widgets.option_list import Option
 from textual.reactive import reactive
 from textual import events, on, work
 from textual.worker import Worker
-from rich.markdown import Markdown
 from rich.text import Text
 
 from dotenv import load_dotenv
@@ -35,33 +34,34 @@ from .utils import parse_message_history, format_token_usage
 class ChatMessage(Container):
     """A single chat message widget."""
     
-    def __init__(self, role: str, content: str, timestamp: str = None):
+    def __init__(self, role: str, content: str, timestamp: Optional[str] = None, user_name: str = "You", assistant_name: str = "Assistant"):
         """Initialize chat message."""
         self.role = role
         self.timestamp = timestamp or datetime.utcnow().strftime("%H:%M:%S")
         self.content_text = content
+        self.user_name = user_name
+        self.assistant_name = assistant_name
         super().__init__(classes=role)  # Add role as CSS class
     
     def compose(self) -> ComposeResult:
         """Compose the message."""
-        prefix = "**You:**" if self.role == "user" else "**Assistant:**"
+        prefix = f"## {self.user_name}" if self.role == "user" else f"## {self.assistant_name}"
         timestamp_str = f" `[{self.timestamp}]`" if self.timestamp else ""
         
-        # Use a Static widget that we can query and update later
-        yield Static(
-            Markdown(f"{prefix}{timestamp_str}\n\n{self.content_text}"),
-            id=f"msg-content-{id(self)}"
-        )
+        # Use Textual's Markdown widget directly for proper rendering
+        markdown_content = f"{prefix}{timestamp_str}\n\n{self.content_text}"
+        yield Markdown(markdown_content, id=f"msg-content-{id(self)}")
     
     def update_content(self, content: str):
         """Update message content (for streaming)."""
         self.content_text = content
-        # Update the Static widget's renderable
+        # Update the Markdown widget's content
         try:
-            content_widget = self.query_one(f"#msg-content-{id(self)}", Static)
-            prefix = "**You:**" if self.role == "user" else "**Assistant:**"
+            content_widget = self.query_one(f"#msg-content-{id(self)}", Markdown)
+            prefix = f"## {self.user_name}" if self.role == "user" else f"## {self.assistant_name}"
             timestamp_str = f" `[{self.timestamp}]`" if self.timestamp else ""
-            content_widget.update(Markdown(f"{prefix}{timestamp_str}\n\n{self.content_text}"))
+            markdown_content = f"{prefix}{timestamp_str}\n\n{self.content_text}"
+            content_widget.update(markdown_content)
         except Exception:
             # Widget may not exist yet during initialization
             pass
@@ -84,14 +84,24 @@ class ChatSidebar(Container):
 class ChatView(ScrollableContainer):
     """Main chat messages view."""
     
-    def __init__(self):
+    def __init__(self, user_name: str = "You", assistant_name: str = "Assistant"):
         """Initialize chat view."""
         super().__init__(id="chat-view")
         self.messages: list[ChatMessage] = []
+        self.user_name = user_name
+        self.assistant_name = assistant_name
+        self.welcome_message: Optional[ChatMessage] = None
     
-    def add_message(self, role: str, content: str, timestamp: str = None) -> ChatMessage:
+    def add_message(self, role: str, content: str, timestamp: Optional[str] = None) -> ChatMessage:
         """Add a message to the chat view."""
-        msg = ChatMessage(role, content, timestamp)
+        # If this is a user message and we have a welcome message, remove it
+        if role == "user" and self.welcome_message:
+            self.welcome_message.remove()
+            if self.welcome_message in self.messages:
+                self.messages.remove(self.welcome_message)
+            self.welcome_message = None
+        
+        msg = ChatMessage(role, content, timestamp, self.user_name, self.assistant_name)
         self.messages.append(msg)
         self.mount(msg)
         self.scroll_end(animate=False)
@@ -115,6 +125,13 @@ class ChatView(ScrollableContainer):
         for child in list(self.children):
             child.remove()
         self.messages.clear()
+        self.welcome_message = None
+    
+    def add_welcome_message(self, content: str) -> ChatMessage:
+        """Add a welcome message that will be removed on first user message."""
+        msg = self.add_message("system", content)
+        self.welcome_message = msg
+        return msg
 
 
 class StatusBar(Static):
@@ -191,7 +208,7 @@ class PrattleApp(App):
     
     #chat-view {
         height: 1fr;
-        padding: 1;
+        padding: 0 1;
     }
     
     #input-container {
@@ -211,6 +228,7 @@ class PrattleApp(App):
         width: 100%;
         height: auto;
         margin: 1 0;
+        padding: 0;
     }
     
     ChatMessage.user {
@@ -225,37 +243,48 @@ class PrattleApp(App):
         align: center top;
     }
     
-    ChatMessage > Static {
+    ChatMessage > Markdown {
         width: auto;
         max-width: 80%;
-        padding: 1 2;
+        padding: 0 2 1 2;
+        margin: 0;
     }
     
-    ChatMessage.user > Static {
+    ChatMessage.user > Markdown {
         background: $panel;
         border: solid $accent;
     }
     
-    ChatMessage.assistant > Static {
+    ChatMessage.assistant > Markdown {
         background: $panel;
         border: solid $accent-darken-1;
     }
     
-    ChatMessage.system > Static {
+    ChatMessage.system > Markdown {
         background: $surface;
         border: solid $warning;
         text-align: center;
+    }
+    
+    .title-notification {
+        width: 100%;
+        text-align: center;
+        color: $text-muted;
+        padding: 0 1;
+        margin: 1 0;
     }
     """
     
     BINDINGS = [
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+n", "new_chat", "New Chat"),
+        ("ctrl+d", "delete_chat", "Delete Chat"),
         ("ctrl+f", "search_chats", "Search"),
         ("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
         ("ctrl+h", "show_help", "Help"),
         ("ctrl+m", "show_models", "Models"),
         ("ctrl+comma", "show_settings", "Settings"),
+        ("tab", "toggle_focus", "Switch Focus"),
     ]
     
     def __init__(self):
@@ -359,16 +388,16 @@ class PrattleApp(App):
     
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
-        yield Header()
-        
         with Horizontal():
             yield ChatSidebar()
             
             with Container(id="chat-container"):
-                yield ChatView()
+                user_name = self.settings.get("user_name", "You")
+                assistant_name = self.settings.get("assistant_name", "Assistant")
+                yield ChatView(user_name=user_name, assistant_name=assistant_name)
                 
                 with Container(id="input-container"):
-                    yield Input(placeholder="Type a message or /command...")
+                    yield Input(placeholder="Type a message or /command...", id="chat-input")
         
         yield StatusBar(id="status-bar")
         yield Footer()
@@ -378,12 +407,14 @@ class PrattleApp(App):
         # Load chat list
         await self._refresh_chat_list()
         
-        # Create or load most recent chat
+        # Load most recent chat if available
         chats = self.chat_file.list_chats()
         if chats:
             await self._load_chat(chats[0].chat_id)
         else:
-            await self._create_new_chat()
+            # No chats yet - show welcome message
+            chat_view = self.query_one(ChatView)
+            chat_view.add_message("system", "No chats yet. Press **Ctrl+N** to create a new chat.")
         
         # Start auto-update timer
         self.set_interval(300, self._check_title_update)  # 5 minutes
@@ -415,16 +446,23 @@ class PrattleApp(App):
     
     async def _create_new_chat(self):
         """Create a new chat."""
+        # Use the default model from settings for new chats
+        default_model = self.settings.get("default_model", DEFAULT_CHAT_MODEL)
+        
         chat_id, _ = self.chat_file.create_new_chat(
             title="New Chat",
-            model=self.current_model
+            model=default_model
         )
         
         self.current_chat_id = chat_id
+        self.current_model = default_model
         
         # Clear chat view
         chat_view = self.query_one(ChatView)
         chat_view.clear_messages()
+        
+        # Show model info in the new chat (will disappear on first message)
+        chat_view.add_welcome_message(f"🤖 Using model: **{default_model}**\n\nType your message below to start chatting.")
         
         # Update status
         status_bar = self.query_one(StatusBar)
@@ -508,6 +546,28 @@ class PrattleApp(App):
             await self._show_model_selector()
         elif message == "SHOW_SETTINGS_UI":
             self.action_show_settings()
+        elif message == "DELETE_CHAT":
+            # Chat was deleted, clear view and show welcome if no chats remain
+            chat_view = self.query_one(ChatView)
+            chat_view.clear_messages()
+            self.current_chat_id = None
+            
+            await self._refresh_chat_list()
+            
+            # Check if there are any remaining chats
+            chats = self.chat_file.list_chats()
+            if chats:
+                # Load the most recent chat
+                await self._load_chat(chats[0].chat_id)
+                # Focus the sidebar list so user can navigate
+                try:
+                    chat_list = self.query_one("#chat-list", ListView)
+                    chat_list.focus()
+                except Exception:
+                    pass
+            else:
+                # No chats left - show welcome message
+                chat_view.add_message("system", "No chats yet. Press **Ctrl+N** to create a new chat.")
         elif message:
             chat_view = self.query_one(ChatView)
             role = "assistant" if success else "system"
@@ -594,7 +654,8 @@ class PrattleApp(App):
                 info_text = format_token_usage(
                     usage.prompt_tokens,
                     usage.completion_tokens,
-                    usage.total_cost
+                    usage.total_cost,
+                    self.current_model
                 )
                 chat_view.add_info_message(info_text)
                 
@@ -626,11 +687,11 @@ class PrattleApp(App):
         
         # Append to full history
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        full_history += f"\n\n**User:** `[{timestamp}]`\n{user_msg}\n\n**Assistant:** `[{timestamp}]`\n{assistant_msg}\n"
+        full_history += f"\n\n## User `[{timestamp}]`\n\n{user_msg}\n\n## Assistant `[{timestamp}]`\n\n{assistant_msg}\n"
         
         # Add token/cost info if available
         if usage:
-            full_history += f"\n*{format_token_usage(usage.prompt_tokens, usage.completion_tokens, usage.total_cost)}*\n"
+            full_history += f"\n*{format_token_usage(usage.prompt_tokens, usage.completion_tokens, usage.total_cost, self.current_model)}*\n"
         
         # Don't auto-populate compact context - only user can do this with /compact command
         # compact_context remains empty until explicitly compacted
@@ -652,7 +713,8 @@ class PrattleApp(App):
             return
         
         full_history = chat_data["full_history"]
-        message_count = full_history.count("**User:**")
+        # Count messages - support both old and new formats
+        message_count = full_history.count("**User:**") + full_history.count("## User")
         
         should_update = await self.memory_manager.should_update_title(
             self.current_chat_id,
@@ -670,6 +732,12 @@ class PrattleApp(App):
             if title:
                 self.chat_file.update_metadata(self.current_chat_id, title=title)
                 await self._refresh_chat_list()
+                
+                # Show notification in chat as a simple info line
+                chat_view = self.query_one(ChatView)
+                info = Static(f"[dim italic]Title updated to: {title}[/dim italic]", classes="title-notification")
+                chat_view.mount(info)
+                chat_view.scroll_end(animate=False)
     
     async def _show_model_selector(self):
         """Show model selector (placeholder - would show a modal in full implementation)."""
@@ -684,6 +752,11 @@ class PrattleApp(App):
         """Create a new chat."""
         asyncio.create_task(self._create_new_chat())
     
+    def action_delete_chat(self):
+        """Delete the current chat."""
+        if self.current_chat_id:
+            asyncio.create_task(self._handle_command("/delete"))
+    
     def action_search_chats(self):
         """Search chats (placeholder)."""
         pass
@@ -692,6 +765,28 @@ class PrattleApp(App):
         """Toggle sidebar visibility."""
         sidebar = self.query_one(ChatSidebar)
         sidebar.display = not sidebar.display
+    
+    def action_toggle_focus(self):
+        """Toggle focus between chat input and sidebar."""
+        try:
+            # Get both the sidebar list and input
+            chat_list = self.query_one("#chat-list", ListView)
+            chat_input = self.query_one("#chat-input", Input)
+            
+            # Check which one currently has focus
+            if chat_input.has_focus:
+                # Switch to sidebar
+                chat_list.focus()
+            else:
+                # Switch to input
+                chat_input.focus()
+        except Exception:
+            # If we can't determine focus, default to input
+            try:
+                chat_input = self.query_one("#chat-input", Input)
+                chat_input.focus()
+            except Exception:
+                pass
     
     def action_show_help(self):
         """Show help."""
@@ -717,13 +812,17 @@ class PrattleApp(App):
                 # Update model if changed
                 self.current_model = new_settings.get("default_model", self.current_model)
                 
+                # Update user/assistant names if changed
+                chat_view = self.query_one(ChatView)
+                chat_view.user_name = new_settings.get("user_name", "You")
+                chat_view.assistant_name = new_settings.get("assistant_name", "Assistant")
+                
                 # Update theme if changed
                 new_theme = new_settings.get("ui", {}).get("theme", "textual-dark")
                 if new_theme != self.theme:
                     self.theme = new_theme
                 
                 # Show confirmation
-                chat_view = self.query_one(ChatView)
                 chat_view.add_message("system", "✅ Settings saved successfully!")
         
         self.push_screen(SettingsScreen(self.settings, self.settings_file), check_settings)

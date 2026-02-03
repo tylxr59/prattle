@@ -124,6 +124,30 @@ class SettingsScreen(Screen):
                     self.inputs["default_model"] = model_input
                     yield model_input
                 
+                # User Name
+                with Horizontal(classes="setting-row"):
+                    yield Label("User Name:", classes="setting-label")
+                    user_name_input = Input(
+                        value=self.settings.get("user_name", "You"),
+                        placeholder="You",
+                        classes="setting-input",
+                        id="user_name"
+                    )
+                    self.inputs["user_name"] = user_name_input
+                    yield user_name_input
+                
+                # Assistant Name
+                with Horizontal(classes="setting-row"):
+                    yield Label("Assistant Name:", classes="setting-label")
+                    assistant_name_input = Input(
+                        value=self.settings.get("assistant_name", "Assistant"),
+                        placeholder="Assistant",
+                        classes="setting-input",
+                        id="assistant_name"
+                    )
+                    self.inputs["assistant_name"] = assistant_name_input
+                    yield assistant_name_input
+                
                 # Title Update Interval
                 with Horizontal(classes="setting-row"):
                     yield Label("Title Update (seconds):", classes="setting-label")
@@ -216,6 +240,8 @@ class SettingsScreen(Screen):
         # Update settings from inputs
         self.settings["openrouter_api_key"] = self.inputs["openrouter_api_key"].value
         self.settings["default_model"] = self.inputs["default_model"].value
+        self.settings["user_name"] = self.inputs["user_name"].value
+        self.settings["assistant_name"] = self.inputs["assistant_name"].value
         
         try:
             value = int(self.inputs["title_update_interval"].value)

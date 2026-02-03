@@ -38,7 +38,8 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
         if line.startswith("*💬") and "tokens" in line:
             continue
         
-        if line.startswith("**User:**"):
+        # Check for both old format (**User:**) and new format (## User)
+        if line.startswith("**User:**") or line.startswith("## User"):
             # Save previous message if exists
             if current_role and current_content:
                 content_text = "\n".join(current_content).strip()
@@ -47,11 +48,14 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
             
             # Start new user message
             current_role = "user"
-            content = line.replace("**User:**", "").strip()
+            if line.startswith("**User:**"):
+                content = line.replace("**User:**", "").strip()
+            else:
+                content = line.replace("## User", "").strip()
             content = strip_timestamp(content)
             current_content = [content] if content else []
             
-        elif line.startswith("**Assistant:**"):
+        elif line.startswith("**Assistant:**") or line.startswith("## Assistant"):
             # Save previous message if exists
             if current_role and current_content:
                 content_text = "\n".join(current_content).strip()
@@ -60,12 +64,15 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
             
             # Start new assistant message
             current_role = "assistant"
-            content = line.replace("**Assistant:**", "").strip()
+            if line.startswith("**Assistant:**"):
+                content = line.replace("**Assistant:**", "").strip()
+            else:
+                content = line.replace("## Assistant", "").strip()
             content = strip_timestamp(content)
             current_content = [content] if content else []
             
-        elif current_role and line.strip():
-            # Continue current message
+        elif current_role:
+            # Continue current message - preserve blank lines for markdown formatting
             current_content.append(line)
     
     # Don't forget the last message
@@ -77,7 +84,7 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
     return messages
 
 
-def format_token_usage(prompt_tokens: int, completion_tokens: int, total_cost: float) -> str:
+def format_token_usage(prompt_tokens: int, completion_tokens: int, total_cost: float, model: str) -> str:
     """
     Format token usage info for display.
     
@@ -85,12 +92,14 @@ def format_token_usage(prompt_tokens: int, completion_tokens: int, total_cost: f
         prompt_tokens: Number of prompt tokens
         completion_tokens: Number of completion tokens
         total_cost: Total cost in dollars
+        model: Model name/ID used (optional)
         
     Returns:
         Formatted string
     """
     total = prompt_tokens + completion_tokens
+    model_str = f" • 🤖 {model}" if model else ""
     return (
         f"💬 {total} tokens ({prompt_tokens} prompt + {completion_tokens} completion) "
-        f"• 💰 ${total_cost:.6f}"
+        f"• 💰 ${total_cost:.6f}{model_str}"
     )
