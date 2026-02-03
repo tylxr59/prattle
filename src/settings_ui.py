@@ -1,5 +1,6 @@
 """Settings UI screen for managing configuration."""
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -237,8 +238,10 @@ class SettingsScreen(Screen):
     
     def save_settings(self):
         """Save settings and close."""
-        # Update settings from inputs
-        self.settings["openrouter_api_key"] = self.inputs["openrouter_api_key"].value
+        # Capture API key but don't save to settings.json (security)
+        api_key = self.inputs["openrouter_api_key"].value
+        
+        # Update settings from inputs (excluding API key)
         self.settings["default_model"] = self.inputs["default_model"].value
         self.settings["user_name"] = self.inputs["user_name"].value
         self.settings["assistant_name"] = self.inputs["assistant_name"].value
@@ -274,34 +277,46 @@ class SettingsScreen(Screen):
         self.settings["ui"]["syntax_theme"] = self.inputs["syntax_theme"].value
         self.settings["ui"]["theme"] = self.inputs["tui_theme"].value
         
+        # Remove API key if it exists in settings (should not be there)
+        if "openrouter_api_key" in self.settings:
+            del self.settings["openrouter_api_key"]
+        
         # Save to file
-        self.settings_file.write_text(json.dumps(self.settings, indent=2))
+        try:
+            self.settings_file.write_text(json.dumps(self.settings, indent=2))
+            logging.info("Settings saved successfully")
+        except Exception as e:
+            logging.error(f"Failed to save settings: {e}")
+            # Continue anyway to try to save API key
         
         # Also update .env with API key if provided
-        api_key = self.settings.get("openrouter_api_key", "")
-        if api_key:
+        if api_key and api_key.strip():
             env_file = self.settings_file.parent / ".env"
-            env_content = f"OPENROUTER_API_KEY={api_key}\n"
             
-            if env_file.exists():
-                # Update existing .env
-                lines = env_file.read_text().split("\n")
-                new_lines = []
-                updated = False
-                
-                for line in lines:
-                    if line.startswith("OPENROUTER_API_KEY="):
+            try:
+                if env_file.exists():
+                    # Update existing .env
+                    lines = env_file.read_text().split("\n")
+                    new_lines = []
+                    updated = False
+                    
+                    for line in lines:
+                        if line.startswith("OPENROUTER_API_KEY="):
+                            new_lines.append(f"OPENROUTER_API_KEY={api_key}")
+                            updated = True
+                        else:
+                            new_lines.append(line)
+                    
+                    if not updated:
                         new_lines.append(f"OPENROUTER_API_KEY={api_key}")
-                        updated = True
-                    else:
-                        new_lines.append(line)
+                    
+                    env_file.write_text("\n".join(new_lines))
+                else:
+                    env_file.write_text(f"OPENROUTER_API_KEY={api_key}\n")
                 
-                if not updated:
-                    new_lines.append(f"OPENROUTER_API_KEY={api_key}")
-                
-                env_file.write_text("\n".join(new_lines))
-            else:
-                env_file.write_text(env_content)
+                logging.info("API key saved to .env file")
+            except Exception as e:
+                logging.error(f"Failed to save API key to .env: {e}")
         
         # Return to main app with settings
         self.dismiss(self.settings)

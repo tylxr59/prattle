@@ -1,6 +1,7 @@
 """Chat file management with UUID-based filenames and frontmatter."""
 import uuid
 import yaml
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -152,7 +153,8 @@ class ChatFile:
                     data = self._parse_chat_file(content)
                     if data:
                         chats.append(data["metadata"])
-                except Exception:
+                except Exception as e:
+                    logging.error(f"Failed to parse chat file {file_path}: {e}")
                     continue
         
         # Sort by modified time (most recent first)
@@ -220,7 +222,8 @@ class ChatFile:
         try:
             metadata_dict = yaml.safe_load(parts[1])
             metadata = ChatMetadata.from_dict(metadata_dict)
-        except Exception:
+        except Exception as e:
+            logging.error(f"Failed to parse metadata from chat file: {e}")
             return None
         
         body = parts[2]

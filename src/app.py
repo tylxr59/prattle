@@ -1,6 +1,7 @@
 """Main Textual TUI application."""
 import os
 import json
+import logging
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -26,7 +27,9 @@ from .constants import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_TITLE_UPDATE_INTERVAL,
     DEFAULT_MEMORY_UPDATE_INTERVAL,
-    MAX_MEMORY_ENTRIES
+    MAX_MEMORY_ENTRIES,
+    USER_HEADER,
+    ASSISTANT_HEADER
 )
 from .utils import parse_message_history, format_token_usage
 
@@ -300,11 +303,12 @@ class PrattleApp(App):
         # Initialize components
         self.chat_file = ChatFile(self.base_path / "chats")
         
-        # Try to get API key from settings first, then environment
-        api_key = self.settings.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+        # Get API key from environment variable only (not settings.json for security)
+        api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            # Allow app to start even without API key - user can set it in settings
-            api_key = "dummy_key_to_be_set_in_settings"
+            logging.warning("No OPENROUTER_API_KEY found in environment. Set it in .env file.")
+            # Allow app to start - user will get error when trying to send messages
+            api_key = "MISSING_API_KEY_SET_IN_ENV"
         
         self.openrouter = OpenRouterClient(api_key)
         
@@ -351,7 +355,6 @@ class PrattleApp(App):
         
         # Create default settings
         default_settings = {
-            "openrouter_api_key": "",
             "default_model": DEFAULT_CHAT_MODEL,
             "title_update_interval": DEFAULT_TITLE_UPDATE_INTERVAL,
             "memory_update_interval": DEFAULT_MEMORY_UPDATE_INTERVAL,
@@ -454,6 +457,8 @@ class PrattleApp(App):
             model=default_model
         )
         
+        logging.info(f"Created new chat: {chat_id} with model {default_model}")
+        
         self.current_chat_id = chat_id
         self.current_model = default_model
         
@@ -475,11 +480,14 @@ class PrattleApp(App):
         """Load an existing chat."""
         chat_data = self.chat_file.load_chat(chat_id)
         if not chat_data:
+            logging.error(f"Failed to load chat: {chat_id}")
             return
         
         self.current_chat_id = chat_id
         metadata = chat_data["metadata"]
         self.current_model = metadata.model
+        
+        logging.info(f"Loaded chat: {chat_id} ({metadata.title}) with model {metadata.model}")
         
         # Clear and populate chat view
         chat_view = self.query_one(ChatView)
@@ -573,45 +581,32 @@ class PrattleApp(App):
             role = "assistant" if success else "system"
             chat_view.add_message(role, message)
     
-    async def _send_message(self, user_message: str):
-        """
-        Send message to API and stream response.
-        
-        Builds context from system prompt, memories, compact context, and history,
-        then streams the response and saves to chat file.
+    def _build_api_messages(self, chat_data: dict, user_message: str) -> list:
+        """Build message list for API call from context and history.
         
         Args:
-            user_message: The user's message to send
+            chat_data: Loaded chat data containing history and context
+            user_message: Current user message to append
+            
+        Returns:
+            List of message dicts for API
         """
-        if not self.current_chat_id:
-            return
-        
-        # Load chat history
-        chat_data = self.chat_file.load_chat(self.current_chat_id)
-        if not chat_data:
-            return
-        
-        # Load memories and format context
-        memories = self.memory_manager.load_memories(
-            self.settings.get("max_memory_entries_in_context", MAX_MEMORY_ENTRIES)
-        )
-        
-        # Load compact context
-        compact_context = chat_data["compact_context"]
-        
-        # Build messages for API
         messages = []
         
         # System prompt
         messages.append({"role": "system", "content": self.system_prompt})
         
         # Memories
+        memories = self.memory_manager.load_memories(
+            self.settings.get("max_memory_entries_in_context", MAX_MEMORY_ENTRIES)
+        )
         if memories:
-            messages.append({"role": "system", "content": f"# Relevant Memories\n\n{memories}"})
+            messages.append({"role": "system", "content": f"# Relevant Memories\\n\\n{memories}"})
         
         # Compact context (previous conversation summary) - only if exists
+        compact_context = chat_data["compact_context"]
         if compact_context:
-            messages.append({"role": "system", "content": f"# Previous Context\n\n{compact_context}"})
+            messages.append({"role": "system", "content": f"# Previous Context\\n\\n{compact_context}"})
         
         # Add conversation history from this chat
         full_history = chat_data["full_history"]
@@ -623,14 +618,24 @@ class PrattleApp(App):
         # Current user message
         messages.append({"role": "user", "content": user_message})
         
-        # Stream response
-        chat_view = self.query_one(ChatView)
+        return messages
+    
+    async def _stream_response(self, messages: list, chat_view: ChatView) -> tuple[str, Optional[TokenUsage]]:
+        """Stream API response and update chat view in real-time.
+        
+        Args:
+            messages: Message list for API
+            chat_view: Chat view widget to update
+            
+        Returns:
+            Tuple of (complete_response, usage_info)
+        """
         response_content = ""
         usage = None
         
         # Add placeholder for assistant message
         timestamp = datetime.utcnow().strftime("%H:%M:%S")
-        assistant_msg = chat_view.add_message("assistant", "█", timestamp)
+        chat_view.add_message("assistant", "█", timestamp)
         
         try:
             async for content, msg_usage in self.openrouter.chat_completion(
@@ -648,6 +653,42 @@ class PrattleApp(App):
             
             # Remove cursor and show final content
             chat_view.update_last_message(response_content)
+            
+        except Exception as e:
+            logging.error(f"Error streaming response: {e}", exc_info=True)
+            chat_view.update_last_message(f"[Error: {str(e)}]")
+            raise
+        
+        return response_content, usage
+
+    async def _send_message(self, user_message: str):
+        """
+        Send message to API and stream response.
+        
+        Builds context from system prompt, memories, compact context, and history,
+        then streams the response and saves to chat file.
+        
+        Args:
+            user_message: The user's message to send
+        """
+        if not self.current_chat_id:
+            logging.warning("Attempted to send message with no active chat")
+            return
+        
+        # Load chat history
+        chat_data = self.chat_file.load_chat(self.current_chat_id)
+        if not chat_data:
+            logging.error(f"Failed to load chat data for {self.current_chat_id}")
+            return
+        
+        # Build messages for API
+        messages = self._build_api_messages(chat_data, user_message)
+        
+        # Stream response
+        chat_view = self.query_one(ChatView)
+        
+        try:
+            response_content, usage = await self._stream_response(messages, chat_view)
             
             # Show token usage and cost info
             if usage:
@@ -670,7 +711,7 @@ class PrattleApp(App):
             await self._check_title_update()
         
         except Exception as e:
-            chat_view.add_message("system", f"Error: {str(e)}")
+            logging.error(f"Error in _send_message: {e}", exc_info=True)
     
     async def _save_message_to_file(self, user_msg: str, assistant_msg: str, usage: Optional[TokenUsage] = None):
         """Save messages to chat file."""
@@ -713,8 +754,8 @@ class PrattleApp(App):
             return
         
         full_history = chat_data["full_history"]
-        # Count messages - support both old and new formats
-        message_count = full_history.count("**User:**") + full_history.count("## User")
+        # Count messages using the new format only
+        message_count = full_history.count(USER_HEADER)
         
         should_update = await self.memory_manager.should_update_title(
             self.current_chat_id,
@@ -834,8 +875,24 @@ class PrattleApp(App):
 
 def main():
     """Main entry point."""
-    app = PrattleApp()
-    app.run()
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('prattle.log'),
+            logging.StreamHandler()
+        ]
+    )
+    
+    logging.info("Starting Prattle application")
+    
+    try:
+        app = PrattleApp()
+        app.run()
+    except Exception as e:
+        logging.critical(f"Fatal error: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

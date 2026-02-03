@@ -1,6 +1,7 @@
 """OpenRouter API client for chat completions and model management."""
 import httpx
 import json
+import logging
 from typing import AsyncIterator, Optional, Dict, Any, List
 from dataclasses import dataclass
 
@@ -72,14 +73,18 @@ class OpenRouterClient:
         if self._models_cache and not force_refresh:
             return self._models_cache
         
-        response = await self.client.get(f"{self.BASE_URL}/models")
-        response.raise_for_status()
-        
-        data = response.json()
-        models = [ModelInfo.from_api_response(m) for m in data.get("data", [])]
-        self._models_cache = models
-        
-        return models
+        try:
+            response = await self.client.get(f"{self.BASE_URL}/models")
+            response.raise_for_status()
+            
+            data = response.json()
+            models = [ModelInfo.from_api_response(m) for m in data.get("data", [])]
+            self._models_cache = models
+            
+            return models
+        except Exception as e:
+            logging.error(f"Failed to fetch models from OpenRouter: {e}")
+            return self._models_cache if self._models_cache else []
     
     async def get_model_info(self, model_id: str) -> Optional[ModelInfo]:
         """Get information about a specific model."""
@@ -154,7 +159,8 @@ class OpenRouterClient:
                             if content or usage:
                                 yield content, usage
                     
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logging.warning(f"Failed to decode JSON from stream: {data_str[:100]}... Error: {e}")
                         continue
         
         else:

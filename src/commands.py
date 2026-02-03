@@ -1,10 +1,11 @@
 """Command handling for chat operations."""
 import re
+import logging
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
 from datetime import datetime
 
-from .constants import DEFAULT_UTILITY_MODEL
+from .constants import DEFAULT_UTILITY_MODEL, MAX_SEARCH_RESULTS, DEFAULT_TOP_RESULTS, USER_HEADER
 
 
 class CommandHandler:
@@ -76,7 +77,7 @@ class CommandHandler:
 - /search <query> - Search across all chats
 - /parse - Force update title and memories
 - /clear - Clear current chat messages (keeps file)
-- /delete - Delete the current chat permanently
+- /delete confirm - Delete the current chat permanently (requires confirmation)
 
 **Keybindings:**
 
@@ -269,7 +270,7 @@ class CommandHandler:
                     matching_lines = [
                         (i+1, line) for i, line in enumerate(lines)
                         if query.lower() in line.lower()
-                    ][:3]  # First 3 matches per file
+                    ][:DEFAULT_TOP_RESULTS]  # First 3 matches per file
                     
                     results.append({
                         "file": file_path.name,
@@ -277,7 +278,8 @@ class CommandHandler:
                         "matches": matching_lines
                     })
             
-            except Exception:
+            except Exception as e:
+                logging.warning(f"Error searching file {file_path}: {e}")
                 continue
         
         if not results:
@@ -285,7 +287,7 @@ class CommandHandler:
         
         # Format results
         output = f"**Found {len(results)} chat(s) matching '{query}':**\n\n"
-        for result in results[:10]:  # Limit to 10 results
+        for result in results[:MAX_SEARCH_RESULTS]:  # Limit to 10 results
             output += f"**{result['title']}** ({result['file']})\n"
             for line_num, line in result["matches"]:
                 output += f"  Line {line_num}: {line.strip()[:100]}\n"
@@ -338,8 +340,8 @@ class CommandHandler:
         
         full_history = chat_data["full_history"]
         
-        # Count messages (approximate)
-        message_count = full_history.count("**User:**") + full_history.count("**Assistant:**")
+        # Count messages using the new format only
+        message_count = full_history.count(USER_HEADER)
         
         # Update title
         title = await memory_manager.update_title(
@@ -370,13 +372,25 @@ class CommandHandler:
         if not chat_file or not chat_id:
             return False, "Cannot delete: missing required context."
         
+        # Require confirmation flag
+        if not args or args[0] != "confirm":
+            chat_data = chat_file.load_chat(chat_id)
+            title = chat_data["metadata"].title if chat_data else "this chat"
+            return False, f"**WARNING**: This will permanently delete '{title}'.\n\nTo confirm, use: `/delete confirm`"
+        
         # Find and delete the chat file
         file_path = chat_file._find_chat_file(chat_id)
         if not file_path or not file_path.exists():
+            logging.error(f"Chat file not found for deletion: {chat_id}")
             return False, "Chat file not found."
         
         # Delete the file
-        file_path.unlink()
+        try:
+            file_path.unlink()
+            logging.info(f"Deleted chat: {chat_id}")
+        except Exception as e:
+            logging.error(f"Failed to delete chat {chat_id}: {e}")
+            return False, f"Failed to delete chat: {e}"
         
         # Signal to app to create new chat
         return True, "DELETE_CHAT"

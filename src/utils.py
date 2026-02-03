@@ -1,6 +1,9 @@
 """Utility functions used across the application."""
 import re
+import logging
 from typing import Tuple, List
+
+from .constants import USER_HEADER, ASSISTANT_HEADER
 
 
 def strip_timestamp(text: str) -> str:
@@ -38,8 +41,8 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
         if line.startswith("*💬") and "tokens" in line:
             continue
         
-        # Check for both old format (**User:**) and new format (## User)
-        if line.startswith("**User:**") or line.startswith("## User"):
+        # Check for new format (## User / ## Assistant)
+        if line.startswith(USER_HEADER):
             # Save previous message if exists
             if current_role and current_content:
                 content_text = "\n".join(current_content).strip()
@@ -48,14 +51,11 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
             
             # Start new user message
             current_role = "user"
-            if line.startswith("**User:**"):
-                content = line.replace("**User:**", "").strip()
-            else:
-                content = line.replace("## User", "").strip()
+            content = line.replace(USER_HEADER, "").strip()
             content = strip_timestamp(content)
             current_content = [content] if content else []
             
-        elif line.startswith("**Assistant:**") or line.startswith("## Assistant"):
+        elif line.startswith(ASSISTANT_HEADER):
             # Save previous message if exists
             if current_role and current_content:
                 content_text = "\n".join(current_content).strip()
@@ -64,10 +64,7 @@ def parse_message_history(history: str) -> List[Tuple[str, str]]:
             
             # Start new assistant message
             current_role = "assistant"
-            if line.startswith("**Assistant:**"):
-                content = line.replace("**Assistant:**", "").strip()
-            else:
-                content = line.replace("## Assistant", "").strip()
+            content = line.replace(ASSISTANT_HEADER, "").strip()
             content = strip_timestamp(content)
             current_content = [content] if content else []
             

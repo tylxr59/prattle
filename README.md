@@ -35,15 +35,28 @@ source venv/bin/activate
 # Install dependencies
 pip install -e .
 
+# Set up your API key
+cp .env.example .env
+# Edit .env and add your OpenRouter API key
+nano .env  # or use your preferred editor
+
 # Run Prattle (it auto-generates config on first run)
 python prattle.py
 ```
 
+### Configuration
+
+**API Key Setup:**
+- Get your API key from [OpenRouter](https://openrouter.ai/keys)
+- Add it to `.env` file: `OPENROUTER_API_KEY=your_key_here`
+- Never commit your `.env` file to version control (it's in `.gitignore`)
+
 On first run, Prattle will automatically:
-- Create `settings.json` with default configuration
+- Create `settings.json` with default configuration (no API key stored here for security)
 - Set up required directories (`chats/`, `context/`)
 - Generate default system prompt and memories files
-- Prompt you to configure your API key
+
+You can also configure your API key through the UI with `Ctrl+,` (Settings).
 
 ## License
 
