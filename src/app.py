@@ -9,11 +9,13 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Header, Footer, Static, Input, ListView, ListItem, Label, OptionList, Markdown
+from textual.widgets import Header, Footer, Static, Input, TextArea, ListView, ListItem, Label, OptionList, Markdown
 from textual.widgets.option_list import Option
 from textual.reactive import reactive
 from textual import events, on, work
 from textual.worker import Worker
+from textual.message import Message
+from textual.binding import Binding
 from rich.text import Text
 
 from dotenv import load_dotenv
@@ -32,6 +34,35 @@ from .constants import (
     ASSISTANT_HEADER
 )
 from .utils import parse_message_history, format_token_usage
+
+
+class ChatInput(TextArea):
+    """Custom TextArea for chat input that submits on Enter and adds newline on Shift+Enter."""
+    
+    async def _on_key(self, event: events.Key) -> None:
+        """Handle key events."""
+        # Shift+Enter: insert newline manually
+        if event.key == "shift+enter":
+            event.prevent_default()
+            self.insert("\n")
+            return
+        
+        # Plain Enter: submit the message
+        if event.key == "enter":
+            event.prevent_default()
+            self.post_message(self.Submitted(self))
+            return
+        
+        # For all other keys, let TextArea handle them normally
+        await super()._on_key(event)
+    
+    class Submitted(Message):
+        """Message sent when input is submitted."""
+        
+        def __init__(self, text_area: "ChatInput") -> None:
+            super().__init__()
+            self.text_area = text_area
+            self.value = text_area.text
 
 
 class ChatMessage(Container):
@@ -220,6 +251,12 @@ class PrattleApp(App):
         border-top: solid $accent;
     }
     
+    #chat-input {
+        height: auto;
+        min-height: 3;
+        max-height: 10;
+    }
+    
     #status-bar {
         dock: bottom;
         height: 1;
@@ -400,7 +437,7 @@ class PrattleApp(App):
                 yield ChatView(user_name=user_name, assistant_name=assistant_name)
                 
                 with Container(id="input-container"):
-                    yield Input(placeholder="Type a message or /command...", id="chat-input")
+                    yield ChatInput(id="chat-input")
         
         yield StatusBar(id="status-bar")
         yield Footer()
@@ -418,6 +455,11 @@ class PrattleApp(App):
             # No chats yet - show welcome message
             chat_view = self.query_one(ChatView)
             chat_view.add_message("system", "No chats yet. Press **Ctrl+N** to create a new chat.")
+        
+        # Add tip about multi-line input
+        chat_view = self.query_one(ChatView)
+        if not chats or len(chats) == 0:
+            chat_view.add_info_message("💡 Tip: Press Enter to send, Shift+Enter for new line")
         
         # Start auto-update timer
         self.set_interval(300, self._check_title_update)  # 5 minutes
@@ -504,15 +546,15 @@ class PrattleApp(App):
         status_bar = self.query_one(StatusBar)
         status_bar.update_stats(self.current_model)
     
-    @on(Input.Submitted)
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle message submission."""
+    @on(ChatInput.Submitted)
+    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        """Handle message submission from chat input."""
         message = event.value.strip()
         if not message:
             return
         
         # Clear input
-        event.input.value = ""
+        event.text_area.clear()
         
         # Check if it's a command
         if self.command_handler.is_command(message):
@@ -812,7 +854,7 @@ class PrattleApp(App):
         try:
             # Get both the sidebar list and input
             chat_list = self.query_one("#chat-list", ListView)
-            chat_input = self.query_one("#chat-input", Input)
+            chat_input = self.query_one("#chat-input", ChatInput)
             
             # Check which one currently has focus
             if chat_input.has_focus:
@@ -824,7 +866,7 @@ class PrattleApp(App):
         except Exception:
             # If we can't determine focus, default to input
             try:
-                chat_input = self.query_one("#chat-input", Input)
+                chat_input = self.query_one("#chat-input", ChatInput)
                 chat_input.focus()
             except Exception:
                 pass
