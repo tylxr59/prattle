@@ -1,0 +1,25 @@
+{
+  "default_model": "moonshotai/kimi-k2.5",
+  "title_update_interval": 300,
+  "memory_update_interval": 600,
+  "max_memory_entries_in_context": 10,
+  "keybindings": {
+    "quit": "ctrl+q",
+    "new_chat": "ctrl+n",
+    "search_chats": "ctrl+f",
+    "toggle_sidebar": "ctrl+b",
+    "send_message": "ctrl+enter",
+    "clear_input": "ctrl+u",
+    "show_help": "ctrl+h",
+    "show_models": "ctrl+m",
+    "show_settings": "ctrl+,"
+  },
+  "ui": {
+    "show_timestamps": true,
+    "syntax_theme": "monokai",
+    "sidebar_width": 30,
+    "theme": "dracula"
+  },
+  "user_name": "tylxr",
+  "assistant_name": "AI"
+}

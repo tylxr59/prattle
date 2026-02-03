@@ -166,11 +166,10 @@ def main():
     
     # Import and run the app
     try:
-        from src.app import PrattleApp
+        from src.app import main as app_main
         
         print("🚀 Starting Prattle...\n")
-        app = PrattleApp()
-        app.run()
+        app_main()
     
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")

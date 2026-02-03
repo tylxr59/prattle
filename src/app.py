@@ -875,13 +875,12 @@ class PrattleApp(App):
 
 def main():
     """Main entry point."""
-    # Configure logging
+    # Configure logging to file only (not console, since we're in a TUI)
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('prattle.log'),
-            logging.StreamHandler()
+            logging.FileHandler('prattle.log')
         ]
     )
     

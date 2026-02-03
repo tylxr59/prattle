@@ -77,7 +77,7 @@ class CommandHandler:
 - /search <query> - Search across all chats
 - /parse - Force update title and memories
 - /clear - Clear current chat messages (keeps file)
-- /delete confirm - Delete the current chat permanently (requires confirmation)
+- /delete - Delete the current chat permanently (shows confirmation dialog)
 
 **Keybindings:**
 
@@ -372,12 +372,6 @@ class CommandHandler:
         if not chat_file or not chat_id:
             return False, "Cannot delete: missing required context."
         
-        # Require confirmation flag
-        if not args or args[0] != "confirm":
-            chat_data = chat_file.load_chat(chat_id)
-            title = chat_data["metadata"].title if chat_data else "this chat"
-            return False, f"**WARNING**: This will permanently delete '{title}'.\n\nTo confirm, use: `/delete confirm`"
-        
         # Find and delete the chat file
         file_path = chat_file._find_chat_file(chat_id)
         if not file_path or not file_path.exists():
@@ -392,5 +386,5 @@ class CommandHandler:
             logging.error(f"Failed to delete chat {chat_id}: {e}")
             return False, f"Failed to delete chat: {e}"
         
-        # Signal to app to create new chat
+        # Signal success
         return True, "DELETE_CHAT"
