@@ -1,4 +1,6 @@
 # Features to be added
 
  - Active chat indicator
- - Fix the fact you can break chats by including the chat format in messages
+ - Keep chat window scrolled to the bottom when agent is typing
+ - Fix the find command
+ - Add *Thinking...* to window while agent is doing stuff

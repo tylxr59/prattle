@@ -461,8 +461,8 @@ class PrattleApp(App):
         if not chats or len(chats) == 0:
             chat_view.add_info_message("💡 Tip: Press Enter to send, Shift+Enter for new line")
         
-        # Start auto-update timer
-        self.set_interval(300, self._check_title_update)  # 5 minutes
+        # Note: Title updates are triggered after each message is sent
+        # No background polling needed - see _send_message() -> _check_title_update()
     
     async def _refresh_chat_list(self):
         """Refresh the sidebar chat list."""
@@ -539,8 +539,11 @@ class PrattleApp(App):
         full_history = chat_data["full_history"]
         
         # Parse messages using utility function
-        for role, content in parse_message_history(full_history):
+        for role, content, token_info in parse_message_history(full_history):
             chat_view.add_message(role, content)
+            # Add token/cost info if it exists (only for assistant messages)
+            if token_info and role == "assistant":
+                chat_view.add_info_message(token_info)
         
         # Update status
         status_bar = self.query_one(StatusBar)
@@ -653,8 +656,8 @@ class PrattleApp(App):
         # Add conversation history from this chat
         full_history = chat_data["full_history"]
         if full_history.strip():
-            # Parse history using utility function
-            for role, content in parse_message_history(full_history):
+            # Parse history using utility function (ignore token info)
+            for role, content, _token_info in parse_message_history(full_history):
                 messages.append({"role": role, "content": content})
         
         # Current user message
@@ -768,9 +771,16 @@ class PrattleApp(App):
         compact_context = chat_data["compact_context"]
         full_history = chat_data["full_history"]
         
+        # Import escape function
+        from .utils import escape_message_headers
+        
+        # Escape any message headers in user/assistant content to prevent parsing issues
+        user_msg_escaped = escape_message_headers(user_msg)
+        assistant_msg_escaped = escape_message_headers(assistant_msg)
+        
         # Append to full history
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        full_history += f"\n\n## User `[{timestamp}]`\n\n{user_msg}\n\n## Assistant `[{timestamp}]`\n\n{assistant_msg}\n"
+        full_history += f"\n\n## User `[{timestamp}]`\n\n{user_msg_escaped}\n\n## Assistant `[{timestamp}]`\n\n{assistant_msg_escaped}\n"
         
         # Add token/cost info if available
         if usage:

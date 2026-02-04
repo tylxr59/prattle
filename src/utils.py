@@ -6,6 +6,39 @@ from typing import Tuple, List
 from .constants import USER_HEADER, ASSISTANT_HEADER
 
 
+def escape_message_headers(text: str) -> str:
+    """Escape message headers in user content to prevent parsing issues.
+    
+    Replaces '## User' and '## Assistant' at the start of lines with a zero-width space
+    to prevent them from being interpreted as message separators.
+    
+    Args:
+        text: Message content that may contain header-like patterns
+        
+    Returns:
+        Text with headers escaped
+    """
+    # Use zero-width space (U+200B) after ## to break the pattern
+    text = re.sub(r'^## User', '##\u200B User', text, flags=re.MULTILINE)
+    text = re.sub(r'^## Assistant', '##\u200B Assistant', text, flags=re.MULTILINE)
+    return text
+
+
+def unescape_message_headers(text: str) -> str:
+    """Unescape message headers when displaying content.
+    
+    Args:
+        text: Message content with escaped headers
+        
+    Returns:
+        Text with headers unescaped
+    """
+    # Remove zero-width space
+    text = text.replace('##\u200B User', '## User')
+    text = text.replace('##\u200B Assistant', '## Assistant')
+    return text
+
+
 def strip_timestamp(text: str) -> str:
     """
     Remove timestamp from text like `[2026-02-02 14:33:43 UTC]`.
@@ -21,62 +54,64 @@ def strip_timestamp(text: str) -> str:
     return text
 
 
-def parse_message_history(history: str) -> List[Tuple[str, str]]:
-    """
-    Parse chat history into list of (role, content) tuples.
+def parse_message_history(history: str) -> List[Tuple[str, str, str]]:
+    """Parse chat history into list of (role, content, token_info) tuples.
+    
+    Uses regex pattern matching to identify message headers with timestamps,
+    which prevents user content containing '## User' or '## Assistant' from
+    being incorrectly parsed as message boundaries.
     
     Args:
         history: Full chat history in markdown format
         
     Returns:
-        List of (role, content) tuples
+        List of (role, content, token_info) tuples where token_info is empty string if not present
     """
     messages = []
-    lines = history.split("\n")
-    current_role = None
-    current_content = []
     
-    for line in lines:
-        # Skip token/cost info lines
-        if line.startswith("*💬") and "tokens" in line:
-            continue
+    # Pattern: ## User `[YYYY-MM-DD HH:MM:SS UTC]` or ## Assistant `[YYYY-MM-DD HH:MM:SS UTC]`
+    # This ensures we only match actual message headers with timestamps, not user content
+    message_pattern = re.compile(
+        r'^## (User|Assistant) `\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\]`',
+        re.MULTILINE
+    )
+    
+    # Find all message headers
+    matches = list(message_pattern.finditer(history))
+    
+    if not matches:
+        # No messages found
+        return messages
+    
+    for i, match in enumerate(matches):
+        role = match.group(1).lower()  # 'User' or 'Assistant' -> 'user' or 'assistant'
+        start = match.end()  # Content starts after the header line
         
-        # Check for new format (## User / ## Assistant)
-        if line.startswith(USER_HEADER):
-            # Save previous message if exists
-            if current_role and current_content:
-                content_text = "\n".join(current_content).strip()
-                if content_text:
-                    messages.append((current_role, content_text))
-            
-            # Start new user message
-            current_role = "user"
-            content = line.replace(USER_HEADER, "").strip()
-            content = strip_timestamp(content)
-            current_content = [content] if content else []
-            
-        elif line.startswith(ASSISTANT_HEADER):
-            # Save previous message if exists
-            if current_role and current_content:
-                content_text = "\n".join(current_content).strip()
-                if content_text:
-                    messages.append((current_role, content_text))
-            
-            # Start new assistant message
-            current_role = "assistant"
-            content = line.replace(ASSISTANT_HEADER, "").strip()
-            content = strip_timestamp(content)
-            current_content = [content] if content else []
-            
-        elif current_role:
-            # Continue current message - preserve blank lines for markdown formatting
-            current_content.append(line)
-    
-    # Don't forget the last message
-    if current_role and current_content:
-        content_text = "\n".join(current_content).strip()
-        if content_text:
-            messages.append((current_role, content_text))
+        # Find where this message ends (start of next message, or end of string)
+        if i + 1 < len(matches):
+            end = matches[i + 1].start()
+        else:
+            end = len(history)
+        
+        # Extract content
+        content = history[start:end].strip()
+        
+        # Extract token/cost info lines and remove from content
+        content_lines = []
+        token_info = ""
+        for line in content.split('\n'):
+            if line.startswith('*💬') and 'tokens' in line:
+                token_info = line.strip('*').strip()  # Remove asterisks and whitespace
+                continue
+            content_lines.append(line)
+        
+        content = '\n'.join(content_lines).strip()
+        
+        # Unescape any message headers that were in the content
+        content = unescape_message_headers(content)
+        
+        if content:
+            messages.append((role, content, token_info))
     
     return messages
 

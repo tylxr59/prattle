@@ -181,8 +181,18 @@ class MemoryManager:
         
         content = self.memories_file.read_text()
         
-        # Split by section markers and take the last N
-        sections = content.split("---")
+        # Split by section markers with lookahead for "Updated:" to avoid splitting on --- in content
+        # Look for the pattern: ---\n**Updated:
+        import re
+        section_pattern = r'\n---\n\*\*Updated:'
+        sections = re.split(section_pattern, content)
+        
+        # Rejoin with the separator for all but the first section
+        if len(sections) > 1:
+            sections = [sections[0]] + [
+                f'\n---\n**Updated:{sec}' for sec in sections[1:]
+            ]
+        
         recent_sections = sections[-max_entries:] if len(sections) > max_entries else sections
         
-        return "---".join(recent_sections).strip()
+        return "".join(recent_sections).strip()

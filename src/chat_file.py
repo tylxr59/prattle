@@ -1,6 +1,7 @@
-"""Chat file management with UUID-based filenames and frontmatter."""
+"""Chat file management with UUID-based filenames and JSON metadata."""
 import uuid
-import yaml
+import json
+import yaml  # Keep for backward compatibility with old YAML files
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -196,11 +197,11 @@ class ChatFile:
         compact_context: str,
         full_history: str
     ) -> str:
-        """Format a complete chat file with frontmatter and sections."""
-        frontmatter = yaml.dump(metadata.to_dict(), default_flow_style=False)
+        """Format a complete chat file with JSON metadata and sections."""
+        # Single-line JSON metadata (no newlines in JSON)
+        metadata_json = json.dumps(metadata.to_dict(), ensure_ascii=False)
         
-        return f"""---
-{frontmatter}---
+        return f"""{metadata_json}
 
 {self.COMPACT_MARKER}
 {compact_context}
@@ -210,23 +211,48 @@ class ChatFile:
 """
     
     def _parse_chat_file(self, content: str) -> Optional[Dict[str, Any]]:
-        """Parse a chat file and extract metadata and sections."""
-        # Extract frontmatter
-        if not content.startswith("---"):
+        """Parse a chat file and extract metadata and sections.
+        
+        Supports both new JSON format (first line is JSON) and legacy YAML format
+        (starts with ---).
+        """
+        if not content:
             return None
         
-        parts = content.split("---", 2)
-        if len(parts) < 3:
+        lines = content.split('\n', 1)
+        first_line = lines[0].strip()
+        body = lines[1] if len(lines) > 1 else ""
+        
+        metadata_dict = None
+        
+        # Try JSON format first (new format)
+        if first_line.startswith('{'):
+            try:
+                metadata_dict = json.loads(first_line)
+            except json.JSONDecodeError:
+                logging.warning("First line looks like JSON but failed to parse")
+        
+        # Fall back to YAML format (old format) for backward compatibility
+        if metadata_dict is None and content.startswith("---"):
+            logging.info("Detected legacy YAML frontmatter format, parsing...")
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    metadata_dict = yaml.safe_load(parts[1])
+                    body = parts[2]  # Body starts after YAML frontmatter
+                except Exception as e:
+                    logging.error(f"Failed to parse YAML metadata: {e}")
+                    return None
+        
+        if metadata_dict is None:
+            logging.error("Could not parse metadata from chat file")
             return None
         
         try:
-            metadata_dict = yaml.safe_load(parts[1])
             metadata = ChatMetadata.from_dict(metadata_dict)
         except Exception as e:
-            logging.error(f"Failed to parse metadata from chat file: {e}")
+            logging.error(f"Failed to create metadata object: {e}")
             return None
-        
-        body = parts[2]
         
         # Split into compact and full sections
         if self.COMPACT_MARKER in body and self.FULL_HISTORY_MARKER in body:

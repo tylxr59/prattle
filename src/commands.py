@@ -1,5 +1,6 @@
 """Command handling for chat operations."""
 import re
+import json
 import logging
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
@@ -255,9 +256,20 @@ class CommandHandler:
                 
                 # Search in content (case-insensitive)
                 if query.lower() in content.lower():
-                    # Try to extract title from frontmatter
+                    # Try to extract title from metadata
                     title = "Unknown"
-                    if content.startswith("---"):
+                    lines = content.split('\n', 1)
+                    first_line = lines[0].strip()
+                    
+                    # Try JSON format first (new format)
+                    if first_line.startswith('{'):
+                        try:
+                            metadata = json.loads(first_line)
+                            title = metadata.get('title', 'Unknown')
+                        except json.JSONDecodeError:
+                            pass
+                    # Fall back to YAML format (old format)
+                    elif content.startswith("---"):
                         parts = content.split("---", 2)
                         if len(parts) >= 2 and "title:" in parts[1]:
                             for line in parts[1].split("\n"):
