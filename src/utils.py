@@ -1,7 +1,7 @@
 """Utility functions used across the application."""
 import re
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 from .constants import USER_HEADER, ASSISTANT_HEADER
 
@@ -116,22 +116,23 @@ def parse_message_history(history: str) -> List[Tuple[str, str, str]]:
     return messages
 
 
-def format_token_usage(prompt_tokens: int, completion_tokens: int, total_cost: float, model: str) -> str:
-    """
-    Format token usage info for display.
+def format_token_usage(prompt_tokens: int, completion_tokens: int, total_cost: float, model: str, tokens_per_second: Optional[float] = None) -> str:
+    """Format token usage info for display.
     
     Args:
         prompt_tokens: Number of prompt tokens
         completion_tokens: Number of completion tokens
         total_cost: Total cost in dollars
         model: Model name/ID used (optional)
+        tokens_per_second: Generation speed in tokens/sec (optional)
         
     Returns:
         Formatted string
     """
     total = prompt_tokens + completion_tokens
     model_str = f" • 🤖 {model}" if model else ""
+    speed_str = f" • ⚡ {tokens_per_second:.1f} tps" if tokens_per_second else ""
     return (
         f"💬 {total} tokens ({prompt_tokens} prompt + {completion_tokens} completion) "
-        f"• 💰 ${total_cost:.6f}{model_str}"
+        f"• 💰 ${total_cost:.6f}{speed_str}{model_str}"
     )

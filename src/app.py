@@ -700,7 +700,7 @@ class PrattleApp(App):
         
         return messages
     
-    async def _stream_response(self, messages: list, chat_view: ChatView) -> tuple[str, Optional[TokenUsage]]:
+    async def _stream_response(self, messages: list, chat_view: ChatView) -> tuple[str, Optional[TokenUsage], Optional[float]]:
         """Stream API response and update chat view in real-time.
         
         Args:
@@ -708,10 +708,15 @@ class PrattleApp(App):
             chat_view: Chat view widget to update
             
         Returns:
-            Tuple of (complete_response, usage_info)
+            Tuple of (complete_response, usage_info, tokens_per_second)
         """
         response_content = ""
         usage = None
+        
+        # Track timing for tokens per second calculation
+        import time
+        start_time = time.time()
+        first_token_time = None
         
         # Add "Thinking..." placeholder while waiting for first token
         timestamp = datetime.utcnow().strftime("%H:%M:%S")
@@ -725,6 +730,10 @@ class PrattleApp(App):
                 stream=True
             ):
                 if content:
+                    # Record time of first token
+                    if first_chunk:
+                        first_token_time = time.time()
+                    
                     response_content += content
                     # On first chunk, replace "Thinking..." with actual content
                     if first_chunk:
@@ -737,6 +746,13 @@ class PrattleApp(App):
                 if msg_usage:
                     usage = msg_usage
             
+            # Calculate tokens per second (only for generation, not time-to-first-token)
+            tokens_per_second = None
+            if usage and first_token_time:
+                generation_time = time.time() - first_token_time
+                if generation_time > 0:
+                    tokens_per_second = usage.completion_tokens / generation_time
+            
             # Remove cursor and show final content
             chat_view.update_last_message(response_content)
             
@@ -745,7 +761,7 @@ class PrattleApp(App):
             chat_view.update_last_message(f"[Error: {str(e)}]")
             raise
         
-        return response_content, usage
+        return response_content, usage, tokens_per_second
 
     async def _send_message(self, user_message: str):
         """
@@ -774,7 +790,7 @@ class PrattleApp(App):
         chat_view = self.query_one(ChatView)
         
         try:
-            response_content, usage = await self._stream_response(messages, chat_view)
+            response_content, usage, tokens_per_second = await self._stream_response(messages, chat_view)
             
             # Show token usage and cost info
             if usage:
@@ -782,7 +798,8 @@ class PrattleApp(App):
                     usage.prompt_tokens,
                     usage.completion_tokens,
                     usage.total_cost,
-                    self.current_model
+                    self.current_model,
+                    tokens_per_second
                 )
                 chat_view.add_info_message(info_text)
                 
