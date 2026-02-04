@@ -25,6 +25,7 @@ from .openrouter import OpenRouterClient, TokenUsage
 from .memory import MemoryManager
 from .commands import CommandHandler
 from .settings_ui import SettingsScreen
+from .search_ui import SearchScreen, SearchResult
 from .constants import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_TITLE_UPDATE_INTERVAL,
@@ -166,6 +167,12 @@ class ChatView(ScrollableContainer):
         msg = self.add_message("system", content)
         self.welcome_message = msg
         return msg
+    
+    def scroll_to_message(self, index: int):
+        """Scroll to a specific message by index."""
+        if 0 <= index < len(self.messages):
+            message = self.messages[index]
+            message.scroll_visible()
 
 
 class StatusBar(Static):
@@ -909,8 +916,56 @@ class PrattleApp(App):
             asyncio.create_task(self._handle_command("/delete"))
     
     def action_search_chats(self):
-        """Search chats (placeholder)."""
-        pass
+        """Search chats based on context (current chat or all chats)."""
+        # Determine which widget has focus
+        try:
+            chat_list = self.query_one("#chat-list", ListView)
+            
+            # Check if sidebar has focus
+            if chat_list.has_focus:
+                # Search all chats
+                self._open_search_modal("all")
+            else:
+                # Search current chat
+                self._open_search_modal("current")
+        except Exception as e:
+            logging.error(f"Error in action_search_chats: {e}")
+            # Default to searching current chat
+            self._open_search_modal("current")
+    
+    def _open_search_modal(self, mode: str):
+        """Open the search modal."""
+        chat_view = self.query_one(ChatView)
+        
+        if mode == "current" and not self.current_chat_id:
+            chat_view.add_message("system", "No chat loaded to search.")
+            return
+        
+        # Get chat messages for current mode
+        chat_messages = chat_view.messages if mode == "current" else None
+        
+        # Open search screen
+        search_screen = SearchScreen(
+            mode=mode,
+            chat_messages=chat_messages,
+            chat_file_handler=self.chat_file,
+            current_chat_id=self.current_chat_id
+        )
+        
+        self.push_screen(search_screen)
+    
+    @on(SearchResult)
+    async def on_search_result_selected(self, event: SearchResult) -> None:
+        """Handle search result selection."""
+        if event.mode == "current":
+            # Scroll to the message in current chat
+            if event.message_index is not None:
+                chat_view = self.query_one(ChatView)
+                chat_view.scroll_to_message(event.message_index)
+        elif event.mode == "all":
+            # Load the selected chat
+            if event.chat_id:
+                await self._load_chat(event.chat_id)
     
     def action_toggle_sidebar(self):
         """Toggle sidebar visibility."""
