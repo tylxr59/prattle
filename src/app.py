@@ -214,6 +214,7 @@ class PrattleApp(App):
     }
     
     #chat-list {
+        width: 100%;
         height: 1fr;
         background: $surface;
         padding: 0;
@@ -221,7 +222,6 @@ class PrattleApp(App):
     
     #chat-list > ListItem {
         background: $surface;
-        color: $text;
         padding: 1 2;
         height: auto;
     }
@@ -232,6 +232,19 @@ class PrattleApp(App):
     
     #chat-list > ListItem.-highlight {
         background: $accent;
+    }
+    
+    #chat-list Label {
+        width: 100%;
+        height: auto;
+        content-align: left top;
+    }
+    
+    .chat-item-inactive {
+        color: $text-muted;
+    }
+    
+    .chat-item-active {
         color: $text;
     }
     
@@ -479,14 +492,33 @@ class PrattleApp(App):
             await chat_list.mount(item)
         else:
             for chat in chats:
-                # Add icon/bullet prefix
+                # Check if this is the active chat
+                is_active = chat.chat_id == self.current_chat_id
+                
+                # Build display text without truncation - let it wrap
                 if chat.folder:
+                    # For folders: "📁 folder/title"
                     display = f"📁 {chat.folder}/{chat.title}"
                 else:
-                    display = f"• {chat.title}"
+                    # For regular: "• title" or "> title"
+                    bullet = "> " if is_active else "• "
+                    title = chat.title
+                    
+                    # Apply bold formatting to active chat title
+                    if is_active:
+                        title = f"[bold]{title}[/bold]"
+                    
+                    display = f"{bullet}{title}"
                 
-                # Prefix chat ID with 'chat-' to make it a valid Textual ID
-                item = ListItem(Label(display), id=f"chat-{chat.chat_id}")
+                # Create label that will wrap naturally
+                label = Label(display)
+                # Add class based on active state
+                if is_active:
+                    label.add_class("chat-item-active")
+                else:
+                    label.add_class("chat-item-inactive")
+                
+                item = ListItem(label, id=f"chat-{chat.chat_id}")
                 await chat_list.mount(item)
     
     async def _create_new_chat(self):
@@ -548,6 +580,9 @@ class PrattleApp(App):
         # Update status
         status_bar = self.query_one(StatusBar)
         status_bar.update_stats(self.current_model)
+        
+        # Refresh sidebar to update active chat indicator
+        await self._refresh_chat_list()
     
     @on(ChatInput.Submitted)
     async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
@@ -678,11 +713,12 @@ class PrattleApp(App):
         response_content = ""
         usage = None
         
-        # Add placeholder for assistant message
+        # Add "Thinking..." placeholder while waiting for first token
         timestamp = datetime.utcnow().strftime("%H:%M:%S")
-        chat_view.add_message("assistant", "█", timestamp)
+        chat_view.add_message("assistant", "*Thinking...*", timestamp)
         
         try:
+            first_chunk = True
             async for content, msg_usage in self.openrouter.chat_completion(
                 messages,
                 self.current_model,
@@ -690,8 +726,13 @@ class PrattleApp(App):
             ):
                 if content:
                     response_content += content
-                    # Update the message in real-time with streaming content
-                    chat_view.update_last_message(response_content + "█")
+                    # On first chunk, replace "Thinking..." with actual content
+                    if first_chunk:
+                        chat_view.update_last_message(response_content + "█")
+                        first_chunk = False
+                    else:
+                        # Update the message in real-time with streaming content
+                        chat_view.update_last_message(response_content + "█")
                 
                 if msg_usage:
                     usage = msg_usage
