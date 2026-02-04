@@ -164,7 +164,7 @@ class CommandHandler:
         old_compact = chat_data["compact_context"]
         
         new_full_history = f"{full_history}\n\n<!-- Previous compact context -->\n{old_compact}\n"
-        new_compact_context = f"**Summary (generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')})**\n\n{summary}"
+        new_compact_context = f"**Summary (generated {datetime.now().strftime('%Y-%m-%d %H:%M')})**\n\n{summary}"
         
         # Save
         chat_file.save_chat(chat_id, metadata, new_compact_context, new_full_history)

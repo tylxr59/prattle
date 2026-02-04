@@ -72,7 +72,7 @@ class ChatMessage(Container):
     def __init__(self, role: str, content: str, timestamp: Optional[str] = None, user_name: str = "You", assistant_name: str = "Assistant"):
         """Initialize chat message."""
         self.role = role
-        self.timestamp = timestamp or datetime.utcnow().strftime("%H:%M:%S")
+        self.timestamp = timestamp or datetime.now().strftime("%H:%M:%S")
         self.content_text = content
         self.user_name = user_name
         self.assistant_name = assistant_name
@@ -726,7 +726,7 @@ class PrattleApp(App):
         first_token_time = None
         
         # Add "Thinking..." placeholder while waiting for first token
-        timestamp = datetime.utcnow().strftime("%H:%M:%S")
+        timestamp = datetime.now().strftime("%H:%M:%S")
         chat_view.add_message("assistant", "*Thinking...*", timestamp)
         
         try:
@@ -815,7 +815,7 @@ class PrattleApp(App):
                 status_bar.update_stats(self.current_model, usage)
             
             # Save to chat file (append to full history)
-            await self._save_message_to_file(user_message, response_content, usage)
+            await self._save_message_to_file(user_message, response_content, usage, tokens_per_second)
             
             # Trigger title update check
             await self._check_title_update()
@@ -823,7 +823,7 @@ class PrattleApp(App):
         except Exception as e:
             logging.error(f"Error in _send_message: {e}", exc_info=True)
     
-    async def _save_message_to_file(self, user_msg: str, assistant_msg: str, usage: Optional[TokenUsage] = None):
+    async def _save_message_to_file(self, user_msg: str, assistant_msg: str, usage: Optional[TokenUsage] = None, tokens_per_second: Optional[float] = None):
         """Save messages to chat file."""
         if not self.current_chat_id:
             return
@@ -844,12 +844,12 @@ class PrattleApp(App):
         assistant_msg_escaped = escape_message_headers(assistant_msg)
         
         # Append to full history
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         full_history += f"\n\n## User `[{timestamp}]`\n\n{user_msg_escaped}\n\n## Assistant `[{timestamp}]`\n\n{assistant_msg_escaped}\n"
         
         # Add token/cost info if available
         if usage:
-            full_history += f"\n*{format_token_usage(usage.prompt_tokens, usage.completion_tokens, usage.total_cost, self.current_model)}*\n"
+            full_history += f"\n*{format_token_usage(usage.prompt_tokens, usage.completion_tokens, usage.total_cost, self.current_model, tokens_per_second)}*\n"
         
         # Don't auto-populate compact context - only user can do this with /compact command
         # compact_context remains empty until explicitly compacted

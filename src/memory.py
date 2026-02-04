@@ -69,7 +69,7 @@ class MemoryManager:
         
         # Check time interval
         if last_update:
-            elapsed = datetime.utcnow() - last_update
+            elapsed = datetime.now() - last_update
             if elapsed.total_seconds() < self.title_update_interval:
                 return False
         
@@ -97,7 +97,7 @@ class MemoryManager:
             )
             
             # Update cache
-            self._last_title_update[chat_id] = datetime.utcnow()
+            self._last_title_update[chat_id] = datetime.now()
             self._last_message_count[chat_id] = message_count
             
             # Implement LRU eviction if cache is too large
@@ -132,7 +132,7 @@ class MemoryManager:
         if not self._last_memory_update:
             return True
         
-        elapsed = datetime.utcnow() - self._last_memory_update
+        elapsed = datetime.now() - self._last_memory_update
         return elapsed.total_seconds() >= self.memory_update_interval
     
     async def update_memories(
@@ -162,12 +162,12 @@ class MemoryManager:
             
             # Append to file if we got new content
             if new_memories.strip():
-                timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 with open(self.memories_file, "a") as f:
                     f.write(f"\n\n---\n**Updated: {timestamp}**\n\n{new_memories}\n")
             
-            self._last_memory_update = datetime.utcnow()
+            self._last_memory_update = datetime.now()
             
             return new_memories
         

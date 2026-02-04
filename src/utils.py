@@ -41,7 +41,7 @@ def unescape_message_headers(text: str) -> str:
 
 def strip_timestamp(text: str) -> str:
     """
-    Remove timestamp from text like `[2026-02-02 14:33:43 UTC]`.
+    Remove timestamp from text like `[2026-02-02 14:33:43]`.
     
     Args:
         text: Text that may contain a timestamp
@@ -69,10 +69,10 @@ def parse_message_history(history: str) -> List[Tuple[str, str, str]]:
     """
     messages = []
     
-    # Pattern: ## User `[YYYY-MM-DD HH:MM:SS UTC]` or ## Assistant `[YYYY-MM-DD HH:MM:SS UTC]`
+    # Pattern: ## User `[YYYY-MM-DD HH:MM:SS]` or ## Assistant `[YYYY-MM-DD HH:MM:SS]`
     # This ensures we only match actual message headers with timestamps, not user content
     message_pattern = re.compile(
-        r'^## (User|Assistant) `\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\]`',
+        r'^## (User|Assistant) `\[[\d\-: ]+\]`',
         re.MULTILINE
     )
     

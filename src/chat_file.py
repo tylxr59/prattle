@@ -48,7 +48,7 @@ class ChatFile:
     ) -> tuple[str, Path]:
         """Create a new chat file with UUID. Returns (chat_id, file_path)."""
         chat_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now().astimezone().isoformat()
         
         metadata = ChatMetadata(
             chat_id=chat_id,
@@ -95,7 +95,7 @@ class ChatFile:
         full_history: str,
     ) -> Path:
         """Save chat file with updated content."""
-        metadata.modified = datetime.utcnow().isoformat() + "Z"
+        metadata.modified = datetime.now().astimezone().isoformat()
         
         file_path = self._get_file_path(chat_id, metadata.folder)
         old_path = self._find_chat_file(chat_id)
