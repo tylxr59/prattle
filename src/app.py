@@ -338,6 +338,7 @@ class PrattleApp(App):
     BINDINGS = [
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+n", "new_chat", "New Chat"),
+        ("ctrl+c", "cancel_stream", "Cancel"),
         ("ctrl+d", "delete_chat", "Delete Chat"),
         ("ctrl+f", "search_chats", "Search"),
         ("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
@@ -385,6 +386,12 @@ class PrattleApp(App):
         
         # Auto-update workers
         self._title_update_worker: Optional[Worker] = None
+        
+        # Streaming state
+        self._is_streaming: bool = False
+        self._cancel_stream: bool = False
+        self._current_stream_data: Optional[dict] = None
+        self._current_stream_task: Optional[asyncio.Task] = None
         
         # Apply theme from settings
         self.theme = self.settings.get("ui", {}).get("theme", "textual-dark")
@@ -606,12 +613,16 @@ class PrattleApp(App):
             await self._handle_command(message)
             return
         
+        # If no chat is active, create one first
+        if not self.current_chat_id:
+            await self._create_new_chat()
+        
         # Add user message to view
         chat_view = self.query_one(ChatView)
         chat_view.add_message("user", message)
         
-        # Send to API
-        await self._send_message(message)
+        # Send to API (create task so it can be cancelled)
+        self._current_stream_task = asyncio.create_task(self._send_message(message))
     
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle chat selection from sidebar."""
@@ -719,11 +730,16 @@ class PrattleApp(App):
         """
         response_content = ""
         usage = None
+        cancelled = False
         
         # Track timing for tokens per second calculation
         import time
         start_time = time.time()
         first_token_time = None
+        
+        # Mark streaming as active
+        self._is_streaming = True
+        self._cancel_stream = False
         
         # Add "Thinking..." placeholder while waiting for first token
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -736,6 +752,11 @@ class PrattleApp(App):
                 self.current_model,
                 stream=True
             ):
+                # Check for cancellation
+                if self._cancel_stream:
+                    cancelled = True
+                    break
+                
                 if content:
                     # Record time of first token
                     if first_chunk:
@@ -761,12 +782,19 @@ class PrattleApp(App):
                     tokens_per_second = usage.completion_tokens / generation_time
             
             # Remove cursor and show final content
-            chat_view.update_last_message(response_content)
+            if cancelled:
+                chat_view.update_last_message(response_content + "\n\n*[Response cancelled]*")
+            else:
+                chat_view.update_last_message(response_content)
             
         except Exception as e:
             logging.error(f"Error streaming response: {e}", exc_info=True)
             chat_view.update_last_message(f"[Error: {str(e)}]")
             raise
+        finally:
+            # Clean up streaming state
+            self._is_streaming = False
+            self._cancel_stream = False
         
         return response_content, usage, tokens_per_second
 
@@ -796,6 +824,17 @@ class PrattleApp(App):
         # Stream response
         chat_view = self.query_one(ChatView)
         
+        # Store stream data for cancellation handling
+        self._current_stream_data = {
+            "user_message": user_message,
+            "chat_view": chat_view
+        }
+        
+        # Initialize variables for exception handlers
+        response_content = ""
+        usage = None
+        tokens_per_second = None
+        
         try:
             response_content, usage, tokens_per_second = await self._stream_response(messages, chat_view)
             
@@ -814,14 +853,30 @@ class PrattleApp(App):
                 status_bar = self.query_one(StatusBar)
                 status_bar.update_stats(self.current_model, usage)
             
-            # Save to chat file (append to full history)
-            await self._save_message_to_file(user_message, response_content, usage, tokens_per_second)
+            # Save to chat file (append to full history) even if partial/cancelled
+            if response_content:
+                await self._save_message_to_file(user_message, response_content, usage, tokens_per_second)
             
-            # Trigger title update check
-            await self._check_title_update()
+            # Trigger title update check in background (non-blocking)
+            asyncio.create_task(self._check_title_update())
         
+        except asyncio.CancelledError:
+            # Handle cancellation during "Thinking..." or early streaming
+            logging.info("Message sending was cancelled")
+            if response_content:
+                # Save partial response if any content was received
+                chat_view.update_last_message(response_content + "\n\n*[Response cancelled]*")
+                await self._save_message_to_file(user_message, response_content, usage, tokens_per_second)
+            else:
+                # Remove "Thinking..." message if cancelled before first token
+                chat_view.update_last_message("*[Cancelled]*")
+            raise  # Re-raise to properly clean up the task
         except Exception as e:
             logging.error(f"Error in _send_message: {e}", exc_info=True)
+        finally:
+            # Clean up stream data
+            self._current_stream_data = None
+            self._current_stream_task = None
     
     async def _save_message_to_file(self, user_msg: str, assistant_msg: str, usage: Optional[TokenUsage] = None, tokens_per_second: Optional[float] = None):
         """Save messages to chat file."""
@@ -880,22 +935,25 @@ class PrattleApp(App):
         )
         
         if should_update and full_history.strip():
-            title = await self.memory_manager.update_title(
-                self.current_chat_id,
-                full_history,
-                message_count,
-                self.current_model
-            )
-            
-            if title:
-                self.chat_file.update_metadata(self.current_chat_id, title=title)
-                await self._refresh_chat_list()
+            try:
+                title = await self.memory_manager.update_title(
+                    self.current_chat_id,
+                    full_history,
+                    message_count,
+                    self.current_model
+                )
                 
-                # Show notification in chat as a simple info line
-                chat_view = self.query_one(ChatView)
-                info = Static(f"[dim italic]Title updated to: {title}[/dim italic]", classes="title-notification")
-                chat_view.mount(info)
-                chat_view.scroll_end(animate=False)
+                if title:
+                    self.chat_file.update_metadata(self.current_chat_id, title=title)
+                    await self._refresh_chat_list()
+                    
+                    # Show notification in chat as a simple info line
+                    chat_view = self.query_one(ChatView)
+                    info = Static(f"[dim italic]Title updated to: {title}[/dim italic]", classes="title-notification")
+                    chat_view.mount(info)
+                    chat_view.scroll_end(animate=False)
+            except Exception as e:
+                logging.error(f"Error updating title: {e}")
     
     async def _show_model_selector(self):
         """Show model selector (placeholder - would show a modal in full implementation)."""
@@ -914,6 +972,15 @@ class PrattleApp(App):
         """Delete the current chat."""
         if self.current_chat_id:
             asyncio.create_task(self._handle_command("/delete"))
+    
+    def action_cancel_stream(self):
+        """Cancel the current streaming response."""
+        if self._is_streaming:
+            self._cancel_stream = True
+            # Cancel the task to interrupt even during "Thinking..." state
+            if self._current_stream_task and not self._current_stream_task.done():
+                self._current_stream_task.cancel()
+            logging.info("User cancelled streaming response")
     
     def action_search_chats(self):
         """Search chats based on context (current chat or all chats)."""
